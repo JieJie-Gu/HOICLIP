@@ -107,6 +107,8 @@ class GEN(nn.Module):
         # inter_hs_ori = self.interaction_decoder(inter_tgt, memory, memory_key_padding_mask=mask,
         #                                         pos=pos_embed, query_pos=ins_guided_embed)
         # inter_hs_ori = inter_hs_ori.transpose(1, 2)
+
+        # 将vd映射到vs空间
         memory = self.obj_class_ln(self.obj_class_fc(memory))
 
         # h_hs_detached = h_hs.detach()
