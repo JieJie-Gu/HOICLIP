@@ -208,6 +208,18 @@ def get_args_parser():
     # zero shot enhancement
     parser.add_argument('--training_free_enhancement_path', default='', type=str)
 
+    # Scene Prompts / VPT parameters
+    parser.add_argument('--VPT_length', default=8, type=int,
+                        help='Length of Visual Prompt Tuning tokens')
+    parser.add_argument('--img_scene_num', default=4, type=int,
+                        help='Number of image scene prompts')
+    parser.add_argument('--VPT_low_rank', action='store_true',
+                        help='Use low-rank decomposition for VPT')
+    parser.add_argument('--low_rank', action='store_false',
+                        help='Use low-rank decomposition for image scene prompts (default: True in code)')
+    parser.add_argument('--pattern_num', default=2, type=int,
+                        help='Number of top-k scene prompts to select')
+
     return parser
 
 
@@ -247,6 +259,14 @@ def main(args):
     print(args.model_name)
     print('****************')
 
+    # 这段代码的作用是设置模型在分布式训练中的封装方式。
+    # model_without_ddp 表示为不经过 DistributedDataParallel (DDP) 封装的原始模型（"ddp" 即 distributed data parallel 的缩写）。
+    # 默认情况下 model_without_ddp 就等于 model。
+    # 如果当前环境需要分布式训练 (args.distributed)，
+    # 先判断是否启用了自动混合精度 (AMP, args.enable_amp)，
+    # 若是，则还没实现（raise NotImplementedError）。
+    # 否则，将模型用 DistributedDataParallel 封装，并指定当前 GPU。
+    # 这时 model 变成 DDP 封装的对象，需要通过 model.module 拿到原始模型参数，将其赋值回 model_without_ddp。
     model_without_ddp = model
     if args.distributed:
         if args.enable_amp:

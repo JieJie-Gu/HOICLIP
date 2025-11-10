@@ -76,7 +76,7 @@ class GEN(nn.Module):
         nn.init.uniform_(self.inter_guided_embedd.weight)
 
     def forward(self, src, mask, query_embed_h, query_embed_o, pos_guided_embed, pos_embed, clip_model, clip_proj,
-                clip_src):
+                clip_src, img_scene_prompts=None):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
@@ -113,14 +113,20 @@ class GEN(nn.Module):
 
         # h_hs_detached = h_hs.detach()
 
-        inter_hs = (h_hs + o_hs) / 2.0
-        inter_hs = self.queries2spacial_proj(inter_hs[-1])
-        inter_hs = self.queries2spacial_proj_norm(inter_hs)
+        # 这一步是对 instance 解码器输出的人-物特征进行融合，得到每对人-物的交互特征（inter_hs）。
+        # 首先对人特征和物特征（h_hs, o_hs, shape: [num_layers, batch_size, num_queries, hidden_dim]）取均值，获得交互查询初步表示。
+        inter_hs = (h_hs + o_hs) / 2.0         # shape: [num_layers, batch_size, num_queries, hidden_dim]
+        # 取最后一层的交互特征（inter_hs[-1]，shape: [batch_size, num_queries, hidden_dim]），
+        # 通过 queries2spacial_proj 投影模块，把该交互特征从 decoder 空间映射到 clip 空间（输出 shape: [batch_size, num_queries, clip_dim]），适应后续与文本语义的对齐。
+        inter_hs = self.queries2spacial_proj(inter_hs[-1])   # shape: [batch_size, num_queries, clip_dim]
+        # 接着进行 LayerNorm 归一化（shape 不变），稳定特征分布。
+        inter_hs = self.queries2spacial_proj_norm(inter_hs)  # shape: [batch_size, num_queries, clip_dim]
         # inter_hs = inter_hs + self.inter_guided_embedd.weight.unsqueeze(0).repeat(bs, 1, 1)
 
         dtype = inter_hs.dtype
 
-        clip_cls_feature, clip_visual = clip_model.encode_image(clip_src)
+        # 将img_scene_prompts传递给CLIP图像编码器
+        clip_cls_feature, clip_visual = clip_model.encode_image(clip_src, img_scene_prompts=img_scene_prompts)
         clip_cls_feature = clip_cls_feature / clip_cls_feature.norm(dim=1, keepdim=True)
         clip_cls_feature = clip_cls_feature.to(dtype)
         clip_visual = clip_visual.to(dtype)
@@ -325,6 +331,7 @@ class TransformerEncoderLayer(nn.Module):
                     pos: Optional[Tensor] = None):
         src2 = self.norm1(src)
         q = k = self.with_pos_embed(src2, pos)
+        # 这里 self_attn 返回(attn_output, attn_output_weights)，我们只需要 attn_output，所以取[0]
         src2 = self.self_attn(q, k, value=src2, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
         src = src + self.dropout1(src2)

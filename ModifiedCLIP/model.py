@@ -220,20 +220,31 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, img_scene_prompts: torch.Tensor = None):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
         x = torch.cat([self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
+        
+        # 如果提供了img_scene_prompts，将其拼接到图像特征后面
+        if img_scene_prompts is not None:
+            length = x.shape[1]
+            x = torch.cat([x, img_scene_prompts], dim=1)
+        
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
-        contextual = self.ln_post(x[:, :, :])
-        x = self.ln_post(x[:, 0, :])
+        # 如果使用了prompts，需要从输出中分离出原始图像特征和prompt特征
+        if img_scene_prompts is not None:
+            contextual = self.ln_post(x[:, 1:length, :])  # 只对图像patch特征应用ln_post
+        else:
+            contextual = self.ln_post(x[:, :, :])
+        
+        x = self.ln_post(x[:, 0, :])  # CLS token
 
         if self.proj is not None:
             x = x @ self.proj
@@ -338,8 +349,8 @@ class CLIP(nn.Module):
     def dtype(self):
         return self.visual.conv1.weight.dtype
 
-    def encode_image(self, image):
-        return self.visual(image.type(self.dtype))
+    def encode_image(self, image, img_scene_prompts=None):
+        return self.visual(image.type(self.dtype), img_scene_prompts=img_scene_prompts)
 
     def encode_text(self, text):
         x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
